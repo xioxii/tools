@@ -1,0 +1,173 @@
+==============================
+MTK project creation mechanism
+==============================
+
+  MTK project creation mechanism enables customers to create their own projects
+  by cloning the ones released by MTK. The cloned project has the identical
+  configuration and layout with the original one except name-related resources.
+
+
+Background
+==========
+  Cloning a project is a complated task depending on the build system, layout
+  design, per-repo configuration rules, etc. The complexity is often beyond
+  customer's understanding so that a mechanism is required for customization.
+
+
+Preparations
+============
+-- Pick a MTK-released project as the base according to platform and arch
+
+  The platform and arch of the cloned project are identical with the base.
+  Creating a project whose platform or arch differs from the base is not
+  supported.
+
+-- Create repos for cloned projects
+
+  Some repos are project-based. Inspect the repo manifest XML and lookup repos
+  using the base project name for the list, and create the repos for the cloned
+  project accordingly before operation. Those repos may have checks to ensure
+  the repo existence of the cloned project. Even if no checks are implemented
+  there would be build errors.
+
+-- Use a clean codebase obtained via repo init/sync commands
+
+  After the operation there will be new files, directories and local file
+  modifications. Suggest preparing a whole new codebase other than the one you
+  are using to ensure the correctness of the result.
+
+  Repo manifest is mandatory, so that cloning the codebase via cp command will
+  not work.
+
+
+Creating the cloned project
+======================
+-- Utility execution
+
+  Usage:
+  $ cd <CODEBASE_TOP_DIR>
+  $ mtk/tools/common/create-project.py [OPTIONS] <BASE_PROJECT_PATH> <TARGET_PROJECT_PATH>
+
+  For example, in Thin Modem product line create evb6890v1_64_cpe_test base on
+  64-bit MT6890 project evb6890v1_64_cpe:
+
+  $ mtk/tools/common/create-project.py openwrt/target/linux/mt6890/evb6890v1_64_cpe openwrt/target/linux/mt6890/evb6890v1_64_cpe_test
+
+  If the process is done successfully, there will be several git commits pushed
+  to remote Gerrit server for review.
+
+-- What it does
+
+  By default the utility execution includes 4 major steps summarized below.
+
+  * Perform system-specific preparations, such as build system initialization
+
+    Two operations are performed in repo openwrt/ :
+    1. $ make -C openwrt distclean
+
+       Clean up built contents
+
+    2. $ cp openwrt/<BASE_PROJECT_PATH>/target.config openwrt/.config
+       $ make -C openwrt defconfig
+
+       In order to obtain information such as the platform and arch, create
+       the full configuration option set of base project, openwrt/.config.
+
+  * Create create-project.cfg
+
+    Main script create-project.py parses openwrt/.config and generate
+    create-project.cfg in your working directory by default. The file
+    contains KEY=VALUE entries required in project creation flow. Example
+    output:
+
+        BASE_ARCH=arm64
+        BASE_IS_INTERNAL=1
+        BASE_PLATFORM=mt6890
+        BASE_PROJECT_NAME=evb6890v1_64_cpe
+        BASE_PROJECT_PATH=openwrt/target/linux/mt6890/evb6890v1_64_cpe
+        CREATE_PLATFORM=0
+        ENVCFG_FILE=/your/codebase/top/create-project.cfg
+        MANIFEST=.repo/manifest.xml
+        SYSMOD=gem
+        TARGET_ARCH=arm64
+        TARGET_IS_INTERNAL=1
+        TARGET_PLATFORM=mt6890
+        TARGET_PROJECT_NAME=evb6890v1_64_cpe_test
+        TARGET_PROJECT_PATH=openwrt/target/linux/mt6890/evb6890v1_64_cpe_test
+
+  * Execute per-repo script, .create-project
+
+    Main script looks up all the repos containing the executable file
+    .create-project, and execute them with the configuration file path as
+    the argument. The executable .create-project can be implemented in any
+    language, but shell script is recommended due to simplicity. Those
+    .create-project performs repo-specific operations.
+
+    The scripts exits with return code 0 if completed successfully, and print
+    the following message:
+
+    ********************************************************************************
+    Job's done
+    ********************************************************************************
+
+  * Push changes to Gerrit
+
+    After all .create-project are executed, git commits are created in those
+    repos and pushed to remote Gerrit server for review.
+
+-- Verification
+
+  Once the utility finishes it is recommended to verify if the cloned project
+  can build pass before landing commits under review. To verify the cloned Thin
+  Modem project for example:
+
+  $ cd openwrt/
+  $ make distclean
+  $ cp <TARGET_PROJECT>/target.config .config
+  $ make V=s -j24 ...
+
+-- Options
+
+  Refer to the help message for the detail:
+
+    $ mtk/tools/common/create-project.py --help
+
+  Here are some options that may be used more often than others:
+    * --clean
+
+      If the operation fails, use this option to clean up untracked files
+
+    * --reset
+
+      use git reset to restore the repos to remote revision, which means all
+      commits not merged yet and untracked files are removed. Be sure there is
+      no pending or local changes not introduced by create-project.py.
+
+    * --no-cr
+
+      Do not add CR, the MTK-specific commit record such as ALPS12345678, in
+      the commit message. For customers this should be added always.
+
+    * --cfg-only
+
+      Stop the execution after create-project.cfg is generated, meaning that
+      repo-specific operations are not performed. Used to see if the preparation
+      flow is fine.
+
+    * --dont-commit
+
+      Do not create git commits and push to remote after all repo-specific
+      operations are done. Changes are left locally.
+
+    * --print-exec-repos
+
+      Just list the repos requiring project creation customization, that is,
+      repos with .create-project script.
+
+-- Customizations
+
+  If you have repos not released by MTK and require project creation
+  customization, use --print-exec-repos option to list the repos, and refer to
+  their .create-project scripts for implementation detail. Just drop the
+  .create-project executable in your repo, and verify with the main creation
+  flow by executing mtk/tools/common/create-project.py.
